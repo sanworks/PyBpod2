@@ -36,7 +36,7 @@ class ArCom(object):
              Returns:
                  none
         """
-        self._typeNames = ('uint8', 'int8', 'char', 'uint16', 'int16', 'uint32', 'int32', 'single', 'double')
+        self._typeNames = ('uint8', 'int8', 'char', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'float64')
         self._typeBytes = (1, 1, 1, 2, 2, 4, 4, 8)
         self.serialObject = serial.Serial(serial_port_name, baud_rate, timeout=10, rtscts=True)
 
@@ -57,6 +57,18 @@ class ArCom(object):
                  nBytes (int) the number of bytes available to read
          """
         return self.serialObject.inWaiting()
+
+    def flush_input_buffer(self):
+        """  Clears all bytes available to read from the USB serial buffer
+             Args:
+                 none
+             Returns:
+                 none
+         """
+        self.serialObject.reset_input_buffer()
+
+    def set_baud(self, new_baud_rate):
+        self.serialObject.baudrate = new_baud_rate
 
     def write(self, *arg):
         """  Write bytes to the USB serial buffer
