@@ -56,6 +56,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # 2. Python uses 0-indexing, so channels 1-4 on the device are targeted by this class as channels as 0-3
 
 from bpod.utils.arcom import ArCom
+from bpod.utils.reactive_list import ReactiveList
 from math import ceil
 
 
@@ -460,16 +461,3 @@ class BpodWavePlayer(object):
 
 class WavePlayerError(Exception):
     pass
-
-
-class ReactiveList(list):
-    # This class wraps lists of parameters defined per channel, to update the device when list elements are set.
-    # e.g. running this would update my_parameter on the device: BpodWavePlayer.my_parameter[2] = new_value
-    def __init__(self, *args, update_callback=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.update_callback = update_callback
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        if self.update_callback:
-            self.update_callback(self)  # pass the entire list
