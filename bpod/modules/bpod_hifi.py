@@ -315,8 +315,14 @@ class BpodHiFi(object):
             n_samples = waveform.shape[0]
             formatted_waveform = waveform
         else:
-            (nChannels,n_samples) = waveform.shape
-            formatted_waveform = np.ravel(waveform, order='F')
+            (nChannels, n_samples) = waveform.shape
+            if nChannels == 1:
+                is_stereo = 0
+                formatted_waveform = waveform
+            elif nChannels == 2:
+                formatted_waveform = np.ravel(waveform, order='F')
+            else:
+                raise HiFiError('Error: waveforms must be given as lists of 1 x nSamples or 2 x nSamples')
         if self._bit_depth == 16:
             formatted_waveform = formatted_waveform*32767
         self.port.write((ord('L'), sound_index, is_stereo, is_looping), 'uint8',
