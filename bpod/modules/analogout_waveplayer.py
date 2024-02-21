@@ -23,7 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # ---Usage example---
 # #Imports
-# from bpod.modules.bpod_waveplayer import BpodWavePlayer
+# from bpod.modules.analogout_waveplayer import BpodWavePlayer
 # import numpy as np
 # import time
 #

@@ -20,7 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # BpodValveDriver is a class to control the Bpod Valve Driver Module via its USB connection to the PC.
 # ---Usage example---
-# from bpod.modules.bpod_valve_driver import BpodValveDriver
+# from bpod.modules.valvedriver import BpodValveDriver
 # v = BpodValveDriver('COM3') # Replace 'COM3' with the name of the module's USB serial port
 # The simplest way to set the valve state is using v.is_open:
 # v.is_open[0] = 1  # Open valve 1 (as labeled on the device)
@@ -30,7 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # v.set_valve_bits(3)  # Set valves using bits of a byte to indicate open and closed valves. 3 = 00000011. This will
                        # set valves 1+2 open and all others closed.
 # v.close_all()  # Close all valves
-# del V  # Delete the object
+# del v  # Delete the object
 
 from bpod.utils.arcom import ArCom
 from bpod.utils.reactive_list import ReactiveList
