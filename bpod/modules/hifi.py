@@ -69,7 +69,7 @@ class BpodHiFi(object):
         info_params8_bit = self.port.read(4, 'uint8')
         info_params32_bit = self.port.read(3, 'uint32')
 
-        # Set internal parameters
+        # Set internal parameters  (synchronizes defaults to the device)
         self._is_hd = info_params8_bit[0]  # HiFi Module Model (0=base,1=HD)
         self._sampling_rate = info_params32_bit[0]  # Units = Hz
         self._bit_depth = info_params8_bit[1]  # Bits per sample (fixed in firmware)
