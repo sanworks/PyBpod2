@@ -37,7 +37,9 @@ class ArCom(object):
                  none
         """
         self._typeNames = ('uint8', 'int8', 'char', 'uint16', 'int16', 'uint32', 'int32', 'float32', 'float64')
-        self._typeBytes = (1, 1, 1, 2, 2, 4, 4, 8)
+        self._formatNames = ('numpy', 'builtin')
+        self._typeBytes = (1, 1, 1, 2, 2, 4, 4, 4, 8)
+        self._typeFormat = (0, 0, 0, 0, 0, 0, 0, 1, 1)
         self.serialObject = serial.Serial(serial_port_name, baud_rate, timeout=10, rtscts=True)
 
     def close(self):
@@ -103,44 +105,41 @@ class ArCom(object):
         self.serialObject.write(message_bytes)
 
     def read(self, *arg):
-        """  Read bytes from the USB serial buffer
+        """  Read data from the USB serial buffer
              Args:
-                 Arguments containing a message to read. The message format is:
-                 # First value:
-                     Arg 1. The number of values to read
-                     Arg 2. The datatype of the data in Arg 1 (must be supported, see self._typeBytes)
-                 # Additional values (optional) given as pairs of arguments
-                     Arg N. An additional value number of values to read
-                     Arg N+1. The datatype of arg N
-                     Note: If additional args are given, the data will be returned as a list
-                           with each requested value in the next sequential list position
+                 Arguments containing value(s) to read. The message format is:
+                     Arg 0. The number of values to read
+                     Arg 1. The numpy datatype of the data in Arg 0 (must be supported, see self._typeBytes)
+                     Arg 2 (optional): The output format. 0: numpy array (default)
+                                                          1: int or float (single values only)
              Returns:
-                 The data requested, returned as a numpy ndarray
-                (or a list of ndarrays if multiple values were requested)
+                 The data requested, returned as a numpy ndarray, int or float
          """
-        num_types = int(len(arg)/2)
-        arg_pos = 0
-        outputs = []
-        for i in range(0, num_types):
-            num_values = arg[arg_pos]
-            arg_pos += 1
-            datatype = arg[arg_pos]
-            if (datatype in self._typeNames) is False:
-                raise ArCOMError('Error: ' + datatype + ' is not a data type supported by ArCOM.')
-            arg_pos += 1
-            type_index = self._typeNames.index(datatype)
-            byte_width = self._typeBytes[type_index]
-            n_bytes2read = num_values*byte_width
-            message_bytes = self.serialObject.read(n_bytes2read)
-            n_bytes_read = len(message_bytes)
-            if n_bytes_read < n_bytes2read:
-                raise ArCOMError('Error: serial port timed out. ' + str(n_bytes_read) +
-                                 ' bytes read. Expected ' + str(n_bytes2read) + ' byte(s).')
-            this_output = np.frombuffer(message_bytes, datatype)
-            outputs.append(this_output)
-        if num_types == 1:
-            outputs = this_output
-        return outputs
+        num_values = arg[0]
+        datatype = arg[1]
+        output_format = 0  # 0 = numpy array, 1 = builtin int() or float()
+        if len(arg) > 2:
+            if arg[2] == self._formatNames[1]:
+                if num_values > 1:
+                    raise ArCOMError('Error: Builtin int or float format can only be used for reading single values.')
+                output_format = 1
+        if (datatype in self._typeNames) is False:
+            raise ArCOMError('Error: ' + datatype + ' is not a data type supported by ArCOM.')
+        type_index = self._typeNames.index(datatype)
+        byte_width = self._typeBytes[type_index]
+        n_bytes2read = num_values*byte_width
+        message_bytes = self.serialObject.read(n_bytes2read)
+        n_bytes_read = len(message_bytes)
+        if n_bytes_read < n_bytes2read:
+            raise ArCOMError('Error: serial port timed out. ' + str(n_bytes_read) +
+                             ' bytes read. Expected ' + str(n_bytes2read) + ' byte(s).')
+        output = np.frombuffer(message_bytes, datatype)
+        if output_format == 1:  # Convert from numpy to int or float
+            if self._typeFormat[type_index] == 0:
+                output = output.astype(int)[0]
+            elif self._typeFormat[type_index] == 1:
+                output = output.astype(float)[0]
+        return output
 
     def __del__(self):
         self.serialObject.close()
