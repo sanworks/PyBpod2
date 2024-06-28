@@ -48,29 +48,30 @@ class BpodSmartServo(object):
         """
 
         # Connect to device
+        self.motor = None
         self.port = ArCom(port_name, 480000000)
         self.port.write([MENU_BYTE, HANDSHAKE_REQUEST_BYTE], 'uint8')  # Handshake
         reply = self.port.read(1, 'uint8')
         if reply != HANDSHAKE_REPLY_BYTE:
-            raise SmartServoError('Error: An incorrect handshake byte was received.')
+            raise RuntimeError('Error: An incorrect handshake byte was received.')
 
         # Get module information
         self.port.write([MENU_BYTE, ord('?')], 'uint8')
-        self._firmwareVersion = self.port.read(1, 'uint32', 'builtin')
-        self._hardwareVersion = self.port.read(1, 'uint32', 'builtin')
+        self._firmware_version = self.port.read(1, 'uint32', 'builtin')
+        self._hardware_version = self.port.read(1, 'uint32', 'builtin')
         self._max_programs = self.port.read(1, 'uint32', 'builtin')
         self._max_steps = self.port.read(1, 'uint32', 'builtin')
 
         # Setup internal variables
-        self._programLoaded = [False] * self._max_programs
-        self._isConnected = [[False for col in range(N_ADDR)] for row in range(N_CHANNELS)]
-        self._detectedModelName = [["" for col in range(N_ADDR)] for row in range(N_CHANNELS)]
-        self.dioTargetProgram = [1] * N_DIO
-        self.dioFallingEdgeOp = [0] * N_DIO
-        self.dioRisingEdgeOp = [0] * N_DIO
-        self.dioDebounce = [0.01] * N_DIO
+        self._program_loaded = [False] * self._max_programs
+        self._is_connected = [[False for col in range(N_ADDR)] for row in range(N_CHANNELS)]
+        self._detected_model_name = [["" for col in range(N_ADDR)] for row in range(N_CHANNELS)]
+        self.dio_target_program = [1] * N_DIO
+        self.dio_falling_edge_op = [0] * N_DIO
+        self.dio_rising_edge_op = [0] * N_DIO
+        self.dio_debounce = [0.01] * N_DIO
 
-        # Detect servos
+        # Detect and initialize servos
         self.detect_motors()
 
     def stop(self, channel, address):
@@ -92,7 +93,7 @@ class BpodSmartServo(object):
         self.port.write([MENU_BYTE, ord('!')], 'uint8')
         confirmed = self.port.read(1, 'uint8')
         if confirmed != 1:
-            raise SmartServoError('***ALERT!*** Emergency stop not confirmed.')
+            raise RuntimeError('***ALERT!*** Emergency stop not confirmed.')
         print('!! Emergency Stop Acknowledged !!')
         print('All motors now have torque disabled.')
         print('Re-enable motor torque by setting motorMode for each motor.')
@@ -111,9 +112,17 @@ class BpodSmartServo(object):
             model_name = 'Unknown model'
             if motor_model in MODEL_NUMBERS:
                 model_name = MODEL_NAMES[MODEL_NUMBERS.index(motor_model)]
-            self._isConnected[motor_channel-1][motor_address-1] = True
-            self._detectedModelName[motor_channel-1][motor_address-1] = model_name
+            self._is_connected[motor_channel-1][motor_address-1] = True
+            self._detected_model_name[motor_channel-1][motor_address-1] = model_name
             print('Found: Ch: ' + str(motor_channel) + ' Address: ' + str(motor_address) + ' Model: ' + model_name)
+
+        # Create instances of SmartServoInterface class (below) for each motor
+        self.motor = [[SmartServoInterface(self.port, x, y, -1) for y in range(N_ADDR+1)] for x in range(N_CHANNELS+1)]
+        for chan in range(N_CHANNELS):
+            for addr in range(N_ADDR):
+                if self._is_connected[chan][addr]:
+                    self.motor[chan+1][addr+1] = SmartServoInterface(self.port, chan + 1, addr + 1,
+                                                                     self._detected_model_name[chan][addr])
 
     def set_motor_address(self, channel, current_address, new_address):
         """ set_motor_address() Sets a motor's address on its channel. This is useful for setting up daisy-chain configs
@@ -126,17 +135,17 @@ class BpodSmartServo(object):
                 none
         """
         # Confirm address availability
-        if not self._isConnected[channel-1][current_address-1]:
-            raise SmartServoError('Error setting motor address. No motor registered at channel: '
+        if not self._is_connected[channel-1][current_address-1]:
+            raise RuntimeError('Error setting motor address. No motor registered at channel: '
                                   + str(channel) + ' address: ' + str(current_address))
-        if self._isConnected[channel-1][new_address-1]:
-            raise SmartServoError('Error setting motor address. A motor is already registered at channel: '
+        if self._is_connected[channel-1][new_address-1]:
+            raise RuntimeError('Error setting motor address. A motor is already registered at channel: '
                                   + str(channel) + ' address: ' + str(new_address))
 
         # Change the address
         self.port.write([MENU_BYTE, ord('I'), channel, current_address, new_address], 'uint8')
         self._confirm_transfer('setting motor address')
-        self._isConnected[channel-1][current_address-1] = False
+        self._is_connected[channel-1][current_address-1] = False
         print('Address Change Acknowledged.')
         print(' ')
         self.detect_motors()
@@ -240,7 +249,7 @@ class BpodSmartServo(object):
                         channel, 'uint8', address, 'uint8', goal_position, 'float32', movement_limit, 'float32',
                         step_time, 'uint32', n_loops, 'uint32')
         self._confirm_transfer('loading motor program')
-        self._programLoaded[program_index] = True
+        self._program_loaded[program_index] = True
 
     def run_program(self, program_index):
         """
@@ -250,19 +259,258 @@ class BpodSmartServo(object):
         Args:
             program_index: The index of the program to run (integer, range = 0-99)
         """
-        if not self._programLoaded[program_index]:
-            raise SmartServoError('Cannot run motor program ' + str(program_index)
+        if not self._program_loaded[program_index]:
+            raise RuntimeError('Cannot run motor program ' + str(program_index)
                                   + ', it must be loaded to the device first. ')
         self.port.write([MENU_BYTE, ord('R'), program_index], 'uint8')
 
     def _confirm_transfer(self, transfer_description):
         msg = self.port.read(1, 'uint8')
         if msg != 1:
-            raise SmartServoError("Error " + transfer_description + ". Confirm code not returned.")
+            raise RuntimeError("Error " + transfer_description + ". Confirm code not returned.")
 
     def __del__(self):
         self.port.close()
 
 
-class SmartServoError(Exception):
-    pass
+class SmartServoInterface:
+
+    def __init__(self, port, channel, address, model_name):
+        self.live_instance = False
+        self.channel = channel
+        self.address = address
+        self.port = None
+        self.info = {}
+        self._control_mode = 1
+        self.motor_mode_ranges = [
+            [0, 360],
+            [-91800, 91800],
+            [0, 360],
+            [0, 0],
+            [-91800, 91800]
+        ]
+        self.selected_mode_range = []
+        self.ctrl_table = None
+
+        if model_name != -1:
+            self.ctrl_table = self.setup_control_table()
+            self.port = port
+            self.info['model_name'] = model_name
+            self.live_instance = True
+            if model_name:
+                self.control_mode = 1
+                self.set_max_velocity(0)
+                self.set_max_acceleration(0)
+                self.info['firmware_version'] = self.read_control_table(self.ctrl_table['FIRMWARE_VERSION'])
+
+    @property
+    def control_mode(self):
+        return self._control_mode
+
+    @control_mode.setter
+    def control_mode(self, new_mode):
+        self.assert_live_instance()
+        if new_mode not in range(1, 6):
+            raise ValueError('Invalid control mode. Valid modes are integers in range 1-5.')
+        self.port.write([MENU_BYTE, ord('M'), self.channel, self.address, new_mode], 'uint8')
+        self.confirm_transmission('setting mode')
+        self._control_mode = new_mode
+        self.selected_mode_range = self.motor_mode_ranges[new_mode - 1]
+
+    def stop_all_motors(self):
+        self.port.write([MENU_BYTE, ord('!')], 'uint8')
+        confirmed = self.port.read(1, 'uint8')
+        print('!! Emergency Stop Acknowledged !!')
+        print('All motors now have torque disabled.')
+        print('Re-enable motor torque by setting motorMode for each motor.')
+        if confirmed != 1:
+            raise RuntimeError('***ALERT!*** Emergency stop not confirmed.')
+
+    def stop(self):
+        self.port.write([MENU_BYTE, ord('X'), self.channel, self.address], 'uint8')
+        self.confirm_transmission(f'stopping motor on channel: {self.channel} address: {self.address}')
+
+    def set_max_velocity(self, max_velocity):
+        self.assert_live_instance()
+        self.port.write([MENU_BYTE, ord('['), self.channel, self.address], 'uint8', max_velocity, 'float32')
+        self.confirm_transmission('setting max velocity')
+
+    def set_max_acceleration(self, max_acceleration):
+        self.assert_live_instance()
+        self.port.write([MENU_BYTE, ord(']'), self.channel, self.address], 'uint8', max_acceleration, 'float32')
+        self.confirm_transmission('setting max acceleration')
+
+    def set_position(self, new_position, *args):
+        self.assert_live_instance()
+        if self.control_mode not in [1, 2]:
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in a position mode (modes 1 or 2) before calling set_position().')
+        if not self.selected_mode_range[0] <= new_position <= self.selected_mode_range[1]:
+            raise ValueError(f'Position goal {new_position} out of range. The target motor is in mode {self.control_mode}, with a position range of {self.selected_mode_range[0]} to {self.selected_mode_range[1]} degrees.')
+
+        pos_bytes = new_position.to_bytes(4, 'little', signed=False)
+        is_position_only = len(args) == 0
+        if not is_position_only:
+            max_velocity = args[0]
+        if len(args) > 1:
+            max_accel = args[1]
+        blocking = args[2] if len(args) > 2 else 0
+
+        if is_position_only:
+            self.port.write([MENU_BYTE, ord('P'), self.channel, self.address], 'uint8', new_position, 'float32')
+        else:
+            self.port.write([MENU_BYTE, ord('G'), self.channel, self.address, blocking], 'uint8',
+                            [new_position, max_velocity, max_accel], 'float32')
+
+        self.confirm_transmission('setting position')
+        if blocking:
+            while self.port.bytes_available == 0:
+                pass
+            movement_complete = self.port.read(1, 'uint8')
+            if movement_complete != 1:
+                raise RuntimeError('Error setting position. Movement end acknowledgement not returned.')
+
+    def set_current_limited_pos(self, new_position, max_current):
+        self.assert_live_instance()
+        if self.control_mode != 3:
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in current-limited position mode (mode 3) before calling set_current_limited_pos().')
+
+        self.port.write([MENU_BYTE, ord('C'), self.channel, self.address], 'uint8',
+                        [new_position, max_current], 'float32')
+        self.confirm_transmission('setting position')
+
+    def set_speed(self, new_speed):
+        self.assert_live_instance()
+        if self.control_mode != 4:
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in Speed mode (mode 4) before calling set_speed().')
+
+        self.port.write([MENU_BYTE, ord('V'), self.channel, self.address], 'uint8', new_speed, 'float32')
+        self.confirm_transmission('setting motor speed')
+
+    def step(self, step_size_degrees):
+        self.assert_live_instance()
+        if self.control_mode != 5:
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in step mode (mode 5) before calling step().')
+
+        self.port.write([MENU_BYTE, ord('S'), self.channel, self.address], 'uint8', step_size_degrees, 'float32')
+        self.confirm_transmission('stepping the motor')
+
+    def get_position(self):
+        self.assert_live_instance()
+        self.port.write([MENU_BYTE, ord('%'), self.channel, self.address], 'uint8')
+        pos = self.port.read(1, 'float32', 'builtin')
+        return pos
+
+    def get_temperature(self):
+        self.assert_live_instance()
+        return self.read_control_table(self.ctrl_table['PRESENT_TEMPERATURE'])
+
+    def __del__(self):
+        self.port = None
+
+    def read_control_table(self, table_address):
+        self.port.write([MENU_BYTE, ord('T'), self.channel, self.address, table_address], 'uint8')
+        value = self.port.read(1, 'int32', 'builtin')
+        return value
+
+    def setup_control_table(self):
+        ctrl_table = {
+            'MODEL_NUMBER': 0,
+            'MODEL_INFORMATION': 1,
+            'FIRMWARE_VERSION': 2,
+            'PROTOCOL_VERSION': 3,
+            'ID': 4,
+            'SECONDARY_ID': 5,
+            'BAUD_RATE': 6,
+            'DRIVE_MODE': 7,
+            'CONTROL_MODE': 8,
+            'OPERATING_MODE': 9,
+            'CW_ANGLE_LIMIT': 10,
+            'CCW_ANGLE_LIMIT': 11,
+            'TEMPERATURE_LIMIT': 12,
+            'MIN_VOLTAGE_LIMIT': 13,
+            'MAX_VOLTAGE_LIMIT': 14,
+            'PWM_LIMIT': 15,
+            'CURRENT_LIMIT': 16,
+            'VELOCITY_LIMIT': 17,
+            'MAX_POSITION_LIMIT': 18,
+            'MIN_POSITION_LIMIT': 19,
+            'ACCELERATION_LIMIT': 20,
+            'MAX_TORQUE': 21,
+            'HOMING_OFFSET': 22,
+            'MOVING_THRESHOLD': 23,
+            'MULTI_TURN_OFFSET': 24,
+            'RESOLUTION_DIVIDER': 25,
+            'EXTERNAL_PORT_MODE_1': 26,
+            'EXTERNAL_PORT_MODE_2': 27,
+            'EXTERNAL_PORT_MODE_3': 28,
+            'EXTERNAL_PORT_MODE_4': 29,
+            'STATUS_RETURN_LEVEL': 30,
+            'RETURN_DELAY_TIME': 31,
+            'ALARM_LED': 32,
+            'SHUTDOWN': 33,
+            'TORQUE_ENABLE': 34,
+            'LED': 35,
+            'LED_RED': 36,
+            'LED_GREEN': 37,
+            'LED_BLUE': 38,
+            'REGISTERED_INSTRUCTION': 39,
+            'HARDWARE_ERROR_STATUS': 40,
+            'VELOCITY_P_GAIN': 41,
+            'VELOCITY_I_GAIN': 42,
+            'POSITION_P_GAIN': 43,
+            'POSITION_I_GAIN': 44,
+            'POSITION_D_GAIN': 45,
+            'FEEDFORWARD_1ST_GAIN': 46,
+            'FEEDFORWARD_2ND_GAIN': 47,
+            'P_GAIN': 48,
+            'I_GAIN': 49,
+            'D_GAIN': 50,
+            'CW_COMPLIANCE_MARGIN': 51,
+            'CCW_COMPLIANCE_MARGIN': 52,
+            'CW_COMPLIANCE_SLOPE': 53,
+            'CCW_COMPLIANCE_SLOPE': 54,
+            'GOAL_PWM': 55,
+            'GOAL_TORQUE': 56,
+            'GOAL_CURRENT': 57,
+            'GOAL_POSITION': 58,
+            'GOAL_VELOCITY': 59,
+            'GOAL_ACCELERATION': 60,
+            'MOVING_SPEED': 61,
+            'PRESENT_PWM': 62,
+            'PRESENT_LOAD': 63,
+            'PRESENT_SPEED': 64,
+            'PRESENT_CURRENT': 65,
+            'PRESENT_POSITION': 66,
+            'PRESENT_VELOCITY': 67,
+            'PRESENT_VOLTAGE': 68,
+            'PRESENT_TEMPERATURE': 69,
+            'TORQUE_LIMIT': 70,
+            'REGISTERED': 71,
+            'MOVING': 72,
+            'LOCK': 73,
+            'PUNCH': 74,
+            'CURRENT': 75,
+            'SENSED_CURRENT': 76,
+            'REALTIME_TICK': 77,
+            'TORQUE_CTRL_MODE_ENABLE': 78,
+            'BUS_WATCHDOG': 79,
+            'PROFILE_ACCELERATION': 80,
+            'PROFILE_VELOCITY': 81,
+            'MOVING_STATUS': 82,
+            'VELOCITY_TRAJECTORY': 83,
+            'POSITION_TRAJECTORY': 84,
+            'PRESENT_INPUT_VOLTAGE': 85,
+        }
+        return ctrl_table
+
+    def assert_live_instance(self):
+        if not self.live_instance:
+            raise RuntimeError(f'Motor not registered at channel: {self.channel}, address: {self.address}\nIf a new servo was recently connected, run SmartServoModule.detectMotors().')
+
+    def confirm_transmission(self, op_name):
+        confirmed = self.port.read(1, 'uint8')
+        if confirmed == 0:
+            raise RuntimeError(f'Error {op_name}: the module denied your request.')
+        elif confirmed != 1:
+            raise RuntimeError(f'Error {op_name}: module did not acknowledge the operation.')
+
