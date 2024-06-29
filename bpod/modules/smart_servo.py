@@ -86,12 +86,13 @@ class BpodSmartServo(object):
         self._confirm_transfer('stopping motor on channel: ' + str(channel) + ' address: ' + str(address))
 
     def STOP(self):  # Emergency stop
-        # STOP() stops all motors by setting their torque to 0, and cancels any ongoing motor programs.
-        # After an emergency stop, torque must be re-enabled by clearing the class instance
-        # or by setting motorMode for each motor.
+        """ STOP() stops all motors by setting their torque to 0, and cancels any ongoing motor programs.
+            After an emergency stop, torque must be re-enabled by clearing the class instance
+            or by setting BpodSmartServo.motor[chan][addr].control_mode for each motor.
+        """
 
         self.port.write([MENU_BYTE, ord('!')], 'uint8')
-        confirmed = self.port.read(1, 'uint8')
+        confirmed = self.port.read(1, 'uint8', 'builtin')
         if confirmed != 1:
             raise RuntimeError('***ALERT!*** Emergency stop not confirmed.')
         print('!! Emergency Stop Acknowledged !!')
@@ -265,7 +266,7 @@ class BpodSmartServo(object):
         self.port.write([MENU_BYTE, ord('R'), program_index], 'uint8')
 
     def _confirm_transfer(self, transfer_description):
-        msg = self.port.read(1, 'uint8')
+        msg = self.port.read(1, 'uint8', 'builtin')
         if msg != 1:
             raise RuntimeError("Error " + transfer_description + ". Confirm code not returned.")
 
@@ -276,6 +277,15 @@ class BpodSmartServo(object):
 class SmartServoInterface:
 
     def __init__(self, port, channel, address, model_name):
+        """  Initializes a SmartServoInterface object, to configure and control an individual motor.
+             Args:
+                 port: the 'port' property of the associated BpodSmartServo object
+                 channel (int): the channel on the device where the target motor is located
+                 address (int): the address on the channel where the target motor is located
+                 model_name (string): The model name of the motor. Must match a supported motor name in MODEL_NAMES
+            Note that an instance of SmartServoInterface for each connected motor is automatically initialized at:
+            BpodSmartServo.motor[channel][address]
+        """
         self.live_instance = False
         self.channel = channel
         self.address = address
@@ -293,7 +303,7 @@ class SmartServoInterface:
         self.ctrl_table = None
 
         if model_name != -1:
-            self.ctrl_table = self.setup_control_table()
+            self.ctrl_table = self._setup_control_table()
             self.port = port
             self.info['model_name'] = model_name
             self.live_instance = True
@@ -309,6 +319,13 @@ class SmartServoInterface:
 
     @control_mode.setter
     def control_mode(self, new_mode):
+        """ Sets the control mode
+            Args:
+                new_mode (int), the new control mode. Valid modes are:
+                                1 = Position. 2 = Extended Position. 3 = Current-limited position 4 = Speed 5 = Step
+            Returns:
+                none
+        """
         self.assert_live_instance()
         if new_mode not in range(1, 6):
             raise ValueError('Invalid control mode. Valid modes are integers in range 1-5.')
@@ -317,35 +334,69 @@ class SmartServoInterface:
         self._control_mode = new_mode
         self.selected_mode_range = self.motor_mode_ranges[new_mode - 1]
 
-    def stop_all_motors(self):
+    def STOP(self):
+        """ EMERGENCY STOP
+            This function stops all motors by setting their torque to 0.
+            It also stops any ongoing motor programs.
+            Torque may be re-enabled by setting BpodSmartServo.motor[chan][addr].control_mode for each motor.
+        """
         self.port.write([MENU_BYTE, ord('!')], 'uint8')
         confirmed = self.port.read(1, 'uint8')
-        print('!! Emergency Stop Acknowledged !!')
-        print('All motors now have torque disabled.')
-        print('Re-enable motor torque by setting motorMode for each motor.')
         if confirmed != 1:
             raise RuntimeError('***ALERT!*** Emergency stop not confirmed.')
+        print('!! Emergency Stop Acknowledged !!')
+        print('All motors now have torque disabled.')
+        print('Re-enable motor torque by setting BpodSmartServo.motor[chan][addr].control_mode for each motor.')
 
     def stop(self):
+        """ % Stop the motor (non-emergency)"""
         self.port.write([MENU_BYTE, ord('X'), self.channel, self.address], 'uint8')
         self.confirm_transmission(f'stopping motor on channel: {self.channel} address: {self.address}')
 
     def set_max_velocity(self, max_velocity):
+        """
+        set_max_velocity() Sets the maximum velocity for all subsequent movements with setPosition(). Units = rev/s
+
+        Args:
+            max_velocity (float) the maximum movement velocity in rev/s
+        """
         self.assert_live_instance()
         self.port.write([MENU_BYTE, ord('['), self.channel, self.address], 'uint8', max_velocity, 'float32')
         self.confirm_transmission('setting max velocity')
 
     def set_max_acceleration(self, max_acceleration):
+        """
+        set_max_acceleration() Sets the maximum acceleration for all subsequent movements with setPosition().
+
+        Args:
+            max_acceleration (float) the maximum acceleration in rev/s^2
+        """
         self.assert_live_instance()
         self.port.write([MENU_BYTE, ord(']'), self.channel, self.address], 'uint8', max_acceleration, 'float32')
         self.confirm_transmission('setting max acceleration')
 
     def set_position(self, new_position, *args):
+        """
+        set_position() sets the position of the motor shaft, in degrees of rotation.
+        This method can only be used in control_mode 1 or 2.
+
+        Required Arguments:
+        new_position: The target position (units = degrees, range = 0-360)
+
+        Optional Arguments (must both be passed in the following order):
+        max_velocity (float): Maximum velocity enroute to target position (units = rev/min, 0 = Max)
+        max_acceleration (float): Maximum acceleration enroute to target position (units = rev/min^2, 0 = Max)
+        blocking (int): 1: Block the MATLAB command prompt until move is complete. 0: Don't.
+        Note: If provided, max velocity and acceleration become the new settings for future movements.
+        """
         self.assert_live_instance()
         if self.control_mode not in [1, 2]:
-            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in a position mode (modes 1 or 2) before calling set_position().')
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in a position mode '
+                             f'(modes 1 or 2) before calling set_position().')
         if not self.selected_mode_range[0] <= new_position <= self.selected_mode_range[1]:
-            raise ValueError(f'Position goal {new_position} out of range. The target motor is in mode {self.control_mode}, with a position range of {self.selected_mode_range[0]} to {self.selected_mode_range[1]} degrees.')
+            raise ValueError(f'Position goal {new_position} out of range. The target motor is in mode '
+                             f'{self.control_mode}, with a position range of {self.selected_mode_range[0]} to '
+                             f'{self.selected_mode_range[1]} degrees.')
 
         pos_bytes = new_position.to_bytes(4, 'little', signed=False)
         is_position_only = len(args) == 0
@@ -370,49 +421,104 @@ class SmartServoInterface:
                 raise RuntimeError('Error setting position. Movement end acknowledgement not returned.')
 
     def set_current_limited_pos(self, new_position, max_current):
+        """
+        set_current_limited_pos() moves to a target position while drawing at most max_current milliamps of current.
+        Setting a current limit controls the maximum force the motor will output enroute to the goal position,
+        for applications where too much force could cause damage.
+        This method can only be used in control_mode 3.
+
+        Arguments:
+        new_position (float): The target position. Units = Degrees
+        max_current (float): The maximum current. Units = mA
+        """
         self.assert_live_instance()
         if self.control_mode != 3:
-            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in current-limited position mode (mode 3) before calling set_current_limited_pos().')
+            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in current-limited '
+                             f'position mode (mode 3) before calling set_current_limited_pos().')
 
         self.port.write([MENU_BYTE, ord('C'), self.channel, self.address], 'uint8',
                         [new_position, max_current], 'float32')
         self.confirm_transmission('setting position')
 
     def set_speed(self, new_speed):
+        """
+        set_speed() sets the motor's rotational velocity target for continuous rotation.
+        This method can only be used in control_mode 4.
+
+        Arguments:
+            new_speed (float): The target speed. Units = rev/s
+        """
         self.assert_live_instance()
         if self.control_mode != 4:
-            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in Speed mode (mode 4) before calling set_speed().')
+            raise ValueError(f'Motor {self.address} on channel {self.channel} '
+                             f'must be in Speed mode (mode 4) before calling set_speed().')
 
         self.port.write([MENU_BYTE, ord('V'), self.channel, self.address], 'uint8', new_speed, 'float32')
         self.confirm_transmission('setting motor speed')
 
     def step(self, step_size_degrees):
+        """
+        step() Rotates by a fixed distance in degrees (+/-) relative to current shaft position
+        This method can only be used in control_mode 5.
+
+        Arguments:
+            step_size_degrees (float): The amount to rotate. Units = degrees
+        """
         self.assert_live_instance()
         if self.control_mode != 5:
-            raise ValueError(f'Motor {self.address} on channel {self.channel} must be in step mode (mode 5) before calling step().')
+            raise ValueError(f'Motor {self.address} on channel {self.channel} '
+                             f'must be in step mode (mode 5) before calling step().')
 
         self.port.write([MENU_BYTE, ord('S'), self.channel, self.address], 'uint8', step_size_degrees, 'float32')
         self.confirm_transmission('stepping the motor')
 
     def get_position(self):
+        """
+        get_position() returns the current shaft position
+
+        Arguments:
+            None
+
+        Returns:
+            pos (float), the current position. Units = degrees
+        """
         self.assert_live_instance()
         self.port.write([MENU_BYTE, ord('%'), self.channel, self.address], 'uint8')
         pos = self.port.read(1, 'float32', 'builtin')
         return pos
 
     def get_temperature(self):
+        """
+        get_temperature() returns the motor temperature
+
+        Arguments:
+            None
+
+        Returns:
+            temp (float), the current motor temperature. Units = degrees Celsius
+        """
         self.assert_live_instance()
         return self.read_control_table(self.ctrl_table['PRESENT_TEMPERATURE'])
 
-    def __del__(self):
-        self.port = None
-
     def read_control_table(self, table_address):
+        """
+        read_control_table() is a low-level function to read a value from the motor's control table.
+        NOTE: The control table indexes listed in _setup_control_table() are different from the control
+              table addresses in a specific motor's datasheet.
+              The Dynamixel2Arduino library converts these to the appropriate address for each motor.
+
+        Arguments:
+            table_address (int) the control table address to read from
+
+        Returns:
+            control_table_value (int32), the value read from the control table at address: table_address
+        """
         self.port.write([MENU_BYTE, ord('T'), self.channel, self.address, table_address], 'uint8')
         value = self.port.read(1, 'int32', 'builtin')
         return value
 
-    def setup_control_table(self):
+    def _setup_control_table(self):
+        # Returns the Dynamixel2Arduino control table as a dict
         ctrl_table = {
             'MODEL_NUMBER': 0,
             'MODEL_INFORMATION': 1,
@@ -504,13 +610,21 @@ class SmartServoInterface:
         return ctrl_table
 
     def assert_live_instance(self):
+        # Throws an error if the class instance is a placeholder for a motor not detected (e.g. in BpodSmartServo.motor)
         if not self.live_instance:
-            raise RuntimeError(f'Motor not registered at channel: {self.channel}, address: {self.address}\nIf a new servo was recently connected, run SmartServoModule.detectMotors().')
+            raise RuntimeError(f'Motor not registered at channel: {self.channel}, address: {self.address}\n'
+                               f'If a new servo was recently connected, run SmartServoModule.detectMotors().')
 
     def confirm_transmission(self, op_name):
+        """
+        confirm_transmission() reads the op confirmation byte, and errors out if a confirmation code was not returned
+        """
         confirmed = self.port.read(1, 'uint8')
         if confirmed == 0:
             raise RuntimeError(f'Error {op_name}: the module denied your request.')
         elif confirmed != 1:
             raise RuntimeError(f'Error {op_name}: module did not acknowledge the operation.')
+
+    def __del__(self):
+        self.port = None
 
