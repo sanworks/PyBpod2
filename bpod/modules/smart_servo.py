@@ -66,10 +66,10 @@ class BpodSmartServo(object):
         self._program_loaded = [False] * self._max_programs
         self._is_connected = [[False for col in range(N_ADDR)] for row in range(N_CHANNELS)]
         self._detected_model_name = [["" for col in range(N_ADDR)] for row in range(N_CHANNELS)]
-        self.dio_target_program = [1] * N_DIO
-        self.dio_falling_edge_op = [0] * N_DIO
-        self.dio_rising_edge_op = [0] * N_DIO
-        self.dio_debounce = [0.01] * N_DIO
+        self._dio_target_program = ReactiveList([1] * N_DIO, update_callback=self.dio_target_program_updater)
+        self._dio_rising_edge_op = ReactiveList([0] * N_DIO, update_callback=self.dio_rising_edge_op_updater)
+        self._dio_falling_edge_op = ReactiveList([0] * N_DIO, update_callback=self.dio_falling_edge_op_updater)
+        self._dio_debounce = ReactiveList([0.01] * N_DIO, update_callback=self.dio_debounce_updater)
 
         # Detect and initialize servos
         self.detect_motors()
@@ -264,6 +264,119 @@ class BpodSmartServo(object):
             raise RuntimeError('Cannot run motor program ' + str(program_index)
                                   + ', it must be loaded to the device first. ')
         self.port.write([MENU_BYTE, ord('R'), program_index], 'uint8')
+
+    @property
+    def dio_target_program(self):
+        return self._dio_target_program
+
+    @dio_target_program.setter
+    def dio_target_program(self, new_programs):
+        """ Sets the target program for each DIO input
+            Args:
+                new_programs (int), a 1 x N_DIO list of program indexes
+            Returns:
+                none
+        """
+        self._dio_target_program = ReactiveList(new_programs, update_callback=self.dio_target_program_updater)
+        self.dio_target_program_updater(new_programs)
+
+    def dio_target_program_updater(self, new_programs):
+        """ Write the DIO target programs to the SmartServo module
+            Args:
+                new_programs, a 1 x N_DIO list of program indexes
+            Returns:
+                none
+        """
+        if len(new_programs) != N_DIO:
+            raise ValueError('new_programs must be a 1x' + str(N_DIO) + 'array of program indexes')
+        self.port.write([MENU_BYTE, ord('=')] + [i-1 for i in new_programs], 'uint8')
+        self._confirm_transfer('setting DIO target program')
+
+    @property
+    def dio_rising_edge_op(self):
+        return self._dio_rising_edge_op
+
+    @dio_rising_edge_op.setter
+    def dio_rising_edge_op(self, new_ops):
+        """ Sets the target op for rising edges detected on each DIO input
+            Args:
+                new_ops (int), a 1 x N_DIO list of operation codes:
+                0 = No Operation, 1 = Start Target Program, 2 = Stop Target Program, 3 = Emergency Stop-All
+            Returns:
+                none
+        """
+        self._dio_rising_edge_op = ReactiveList(new_ops, update_callback=self.dio_rising_edge_op_updater)
+        self.dio_rising_edge_op_updater(new_ops)
+
+    def dio_rising_edge_op_updater(self, new_ops):
+        """ Write the DIO rising edge op codes to the SmartServo module
+            Args:
+                new_ops, a 1 x N_DIO list of operation codes:
+                0 = No Operation, 1 = Start Target Program, 2 = Stop Target Program, 3 = Emergency Stop-All
+            Returns:
+                none
+        """
+        if len(new_ops) != N_DIO:
+            raise ValueError('new_ops must be a 1x' + str(N_DIO) + 'array of op codes')
+        self.port.write([MENU_BYTE, ord('+')] + new_ops, 'uint8')
+        self._confirm_transfer('setting DIO rising edge op codes')
+
+    @property
+    def dio_falling_edge_op(self):
+        return self._dio_falling_edge_op
+
+    @dio_falling_edge_op.setter
+    def dio_falling_edge_op(self, new_ops):
+        """ Sets the target op for falling edges detected on each DIO input
+            Args:
+                new_ops (int), a 1 x N_DIO list of operation codes:
+                0 = No Operation, 1 = Start Target Program, 2 = Stop Target Program, 3 = Emergency Stop-All
+            Returns:
+                none
+        """
+        self._dio_falling_edge_op = ReactiveList(new_ops, update_callback=self.dio_falling_edge_op_updater)
+        self.dio_falling_edge_op_updater(new_ops)
+
+    def dio_falling_edge_op_updater(self, new_ops):
+        """ Write the DIO falling edge op codes to the SmartServo module
+            Args:
+                new_ops, a 1 x N_DIO list of operation codes:
+                0 = No Operation, 1 = Start Target Program, 2 = Stop Target Program, 3 = Emergency Stop-All
+            Returns:
+                none
+        """
+        if len(new_ops) != N_DIO:
+            raise ValueError('new_ops must be a 1x' + str(N_DIO) + 'array of op codes')
+        self.port.write([MENU_BYTE, ord('-')] + new_ops, 'uint8')
+        self._confirm_transfer('setting DIO falling edge op codes')
+
+    @property
+    def dio_debounce(self):
+        return self._dio_debounce
+
+    @dio_debounce.setter
+    def dio_debounce(self, new_debounce):
+        """ Sets the debounce interval for DIO input channels
+            Args:
+                new_debounce (float), a 1 x N_DIO list of debounce intervals (unit = seconds)
+            Returns:
+                none
+        """
+        self._dio_debounce = ReactiveList(new_debounce, update_callback=self.dio_debounce_updater)
+        self.dio_debounce_updater(new_debounce)
+
+    def dio_debounce_updater(self, new_debounce):
+        """ Write the DIO falling edge op codes to the SmartServo module
+            Args:
+                new_ops, a 1 x N_DIO list of operation codes:
+                0 = No Operation, 1 = Start Target Program, 2 = Stop Target Program, 3 = Emergency Stop-All
+            Returns:
+                none
+        """
+        if len(new_debounce) != N_DIO:
+            raise ValueError('new_debounce must be a 1x' + str(N_DIO) + 'array of debounce intervals')
+        self.port.write([MENU_BYTE, ord('~')], 'uint8', [i*10000 for i in new_debounce], 'uint32')
+        self._confirm_transfer('setting DIO falling edge op codes')
 
     def _confirm_transfer(self, transfer_description):
         msg = self.port.read(1, 'uint8', 'builtin')
